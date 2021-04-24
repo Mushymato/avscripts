@@ -4,55 +4,63 @@ import ntpath
 import sys
 import subprocess
 from urllib.parse import quote
-from os import path
+from os import path, listdir
 
-f = ntpath.basename(sys.argv[1])
+# f = ntpath.basename(sys.argv[1])
+domain = "https://u.nisemo.no/"
+try:
+    prefix = sys.argv[1]
+except IndexError:
+    prefix = ""
 
-process = subprocess.Popen(
-    [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        f,
-    ],
-    stdout=subprocess.PIPE,
-    universal_newlines=True,
-)
+for f in listdir("."):
+    if not f.endswith(".mp4"):
+        continue
+    process = subprocess.Popen(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            f,
+        ],
+        stdout=subprocess.PIPE,
+        universal_newlines=True,
+    )
 
-output = process.stdout.readline().strip()
-output = int(round(float(output), 0))
+    output = process.stdout.readline().strip()
+    output = int(round(float(output), 0))
 
-subs = path.exists(f"{f[0:-4]}.vtt")
+    subs = path.exists(f"{f[0:-4]}.vtt")
 
-template = {
-    "title": f[0:-4],
-    "duration": output,
-    "live": False,
-    "sources": [
-        {
-            "url": f"https://u.nisemo.no/{quote(f)}",
-            "contentType": "video/mp4",
-            "quality": 1080,
-        }
-    ],
-}
+    template = {
+        "title": f[0:-4],
+        "duration": output,
+        "live": False,
+        "sources": [
+            {
+                "url": f"{domain}{prefix}{quote(f)}",
+                "contentType": "video/mp4",
+                "quality": 1080,
+            }
+        ],
+    }
 
-if subs:
-    template["textTracks"] = [
-        {
-            "url": f"https://u.nisemo.no/{quote(f[0:-4])}.vtt",
-            "contentType": "text/vtt",
-            "name": "English subtitles",
-            "default": True,
-        }
-    ]
+    if subs:
+        template["textTracks"] = [
+            {
+                "url": f"{domain}{prefix}{quote(f[0:-4])}.vtt",
+                "contentType": "text/vtt",
+                "name": "English subtitles",
+                "default": True,
+            }
+        ]
 
-with open(f"{f[0:-4]}.json", "w") as outf:
-    json.dump(template, outf)
+    with open(f"{f[0:-4]}.json", "w") as outf:
+        json.dump(template, outf)
 
-print(f"finished processing {f}")
-
+    json_url = f"{domain}{prefix}{quote(f)}".replace(".mp4", ".json")
+    print(json_url)
