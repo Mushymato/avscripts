@@ -13,9 +13,10 @@ try:
 except IndexError:
     prefix = ""
 
-for f in listdir("."):
+for f in listdir(prefix or "."):
     if not f.endswith(".mp4"):
         continue
+    fullpath = path.join(prefix, f)
     process = subprocess.Popen(
         [
             "ffprobe",
@@ -25,16 +26,19 @@ for f in listdir("."):
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            f,
+            fullpath,
         ],
         stdout=subprocess.PIPE,
         universal_newlines=True,
     )
 
     output = process.stdout.readline().strip()
-    output = int(round(float(output), 0))
+    try:
+        output = int(round(float(output), 0))
+    except ValueError:
+        continue
 
-    subs = path.exists(f"{f[0:-4]}.vtt")
+    subs = path.exists(f"{fullpath[0:-4]}.vtt")
 
     template = {
         "title": f[0:-4],
@@ -59,7 +63,7 @@ for f in listdir("."):
             }
         ]
 
-    with open(f"{f[0:-4]}.json", "w") as outf:
+    with open(f"{prefix}{f[0:-4]}.json", "w") as outf:
         json.dump(template, outf)
 
     json_url = f"{domain}{prefix}{quote(f)}".replace(".mp4", ".json")

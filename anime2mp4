@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
-# -map 0:a:1 for audiotrack
-# -map 0:s:0 for subtitle
-for f in ./*.mkv; do ffmpeg -i "$f" -c:v libx264 -crf 23 -preset veryfast -tune animation -c:a aac -codec:2 mov_text -filter_complex "subtitles='$f'" "${f%.*}.mp4"; done
+for f in ./$1*.mkv;
+do ffmpeg -i "$f" -crf 23 -preset veryfast -tune animation -map 0:v:0 -map 0:a:1 -map 0:s:1 -c:v libx264 -c:a aac -c:s mov_text -filter_complex "subtitles='$f'" "${f%.*}.mp4";
+# do ffmpeg -i "$f" -crf 23 -preset veryfast -tune animation -c:v libx264 -c:a aac -c:s mov_text -filter_complex "subtitles='$f'" "${f%.*}.mp4";
+# ffmpeg -i "$f" -map 0:s:1 "${f%.*}.vtt"
+done
