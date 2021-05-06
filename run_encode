@@ -1,0 +1,5 @@
+#!/bin/bash
+./anime2mp4 $1
+python gen_manifest "$1"
+# scp $1*.json chu2@45.79.170.149:/var/www/uploads/$1
+# scp $1*.mp4 chu2@45.79.170.149:/var/www/uploads/$1

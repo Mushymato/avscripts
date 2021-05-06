@@ -13,8 +13,11 @@ try:
 except IndexError:
     prefix = ""
 
+ALLOWED_EXT = (".mp4", ".webm")
+
 for f in listdir(prefix or "."):
-    if not f.endswith(".mp4"):
+    basename, ext = path.splitext(f)
+    if ext not in ALLOWED_EXT:
         continue
     fullpath = path.join(prefix, f)
     process = subprocess.Popen(
@@ -47,7 +50,7 @@ for f in listdir(prefix or "."):
         "sources": [
             {
                 "url": f"{domain}{prefix}{quote(f)}",
-                "contentType": "video/mp4",
+                "contentType": f"video/{ext[1:]}",
                 "quality": 1080,
             }
         ],
@@ -66,5 +69,5 @@ for f in listdir(prefix or "."):
     with open(f"{prefix}{f[0:-4]}.json", "w") as outf:
         json.dump(template, outf)
 
-    json_url = f"{domain}{prefix}{quote(f)}".replace(".mp4", ".json")
+    json_url = f"{domain}{prefix}{quote(f)}".replace(ext, ".json")
     print(json_url)
