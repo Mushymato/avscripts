@@ -4,5 +4,5 @@ for f in ./$1*.mkv;
 # -map 0:a:1 to pick audio track
 # subtitles='$f:si=1' to pick subtitle
 # do ffmpeg -i "$f" -movflags +faststart -pix_fmt yuv420p -crf 23 -preset veryfast -tune animation -map 0:a:1 -c:v libx264 -c:a aac -filter_complex "subtitles='$f:si=1'" "${f%.*}.mp4"
-do ffmpeg -i "$f" -movflags +faststart -pix_fmt yuv420p -crf 23 -preset veryfast -tune animation -c:v libx264 -c:a aac -filter_complex "subtitles='$f'" "${f%.*}.mp4";
+do ffmpeg -hide_banner -loglevel error -stats -i "$f" -movflags +faststart -pix_fmt yuv420p -crf 23 -preset veryfast -tune animation -c:v libx264 -c:a aac -filter_complex "subtitles='$f'" "${f%.*}.mp4";
 done
