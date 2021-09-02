@@ -70,4 +70,5 @@ for f in listdir(prefix or "."):
         json.dump(template, outf)
 
     json_url = f"{domain}{prefix}{quote(f)}".replace(ext, ".json")
-    print(json_url)
+    print(json_url, end=",")
+    print()
