@@ -79,69 +79,74 @@ def process(source_dir, target_dir, filename):
     source_path = FFMPEG_ESCAPE.sub(r"\\\1", os.path.join(source_dir, filename))
     basename = os.path.splitext(filename)[0]
     target_path = FFMPEG_ESCAPE.sub(r"\\\1", os.path.join(target_dir, basename + "." + MP4))
-    ffmpeg_call = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        source_path,
-        "-movflags",
-        "+faststart",
-        "-pix_fmt",
-        "yuv420p",
-        "-crf",
-        "23",
-        "-preset",
-        "veryfast",
-        "-tune",
-        "animation",
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-    ]
-    # check which audio track to use
-    audio_tracks = ffprobe_streams(source_path, "a")
-    audio_idx = None
-    for idx, data in enumerate(audio_tracks):
-        if data.get(TAG_LANGUAGE) != "jpn":
-            continue
-        if audio_idx is None:
-            audio_idx = idx
-            break
-    if audio_idx is not None and audio_idx != 0:
-        ffmpeg_call.append("-map")
-        ffmpeg_call.append(f"0:a:{audio_idx}")
-    # check which sub track to use
-    sub_tracks = ffprobe_streams(source_path, "s")
-    sub_idx = None
-    for idx, data in enumerate(sub_tracks):
-        if data.get(TAG_LANGUAGE) != "eng":
-            continue
-        if sub_idx is None or sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0):
-            sub_idx = idx
-    if sub_idx is not None:
-        sub = sub_tracks[sub_idx]
-        ffmpeg_call.append("-filter_complex")
-        if sub.get("codec_name") == "dvdsub":
-            # bitmap subs from old dvd rips
-            ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
-        elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
-            # already default sub track
-            ffmpeg_call.append(f"subtitles='{source_path}'")
-        else:
-            # remap subtitle
-            ffmpeg_call.append(f"subtitles='{source_path}:si={sub_idx}'")
-    ffmpeg_call.append(target_path)
-    print(" ".join(ffmpeg_call), flush=True)
-    subprocess.run(ffmpeg_call)
+
+    if not os.path.exists(target_path):
+        ffmpeg_call = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-stats",
+            "-y",
+            "-i",
+            source_path,
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "23",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "animation",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+        ]
+        # check which audio track to use
+        audio_tracks = ffprobe_streams(source_path, "a")
+        audio_idx = None
+        for idx, data in enumerate(audio_tracks):
+            if data.get(TAG_LANGUAGE) != "jpn":
+                continue
+            if audio_idx is None:
+                audio_idx = idx
+                break
+        if audio_idx is not None and audio_idx != 0:
+            ffmpeg_call.append("-map")
+            ffmpeg_call.append(f"0:a:{audio_idx}")
+        # check which sub track to use
+        sub_tracks = ffprobe_streams(source_path, "s")
+        sub_idx = None
+        for idx, data in enumerate(sub_tracks):
+            if data.get(TAG_LANGUAGE) != "eng":
+                continue
+            if sub_idx is None or sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0):
+                sub_idx = idx
+        if sub_idx is not None:
+            sub = sub_tracks[sub_idx]
+            ffmpeg_call.append("-filter_complex")
+            if sub.get("codec_name") == "dvdsub":
+                # bitmap subs from old dvd rips
+                ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
+            elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
+                # already default sub track
+                ffmpeg_call.append(f"subtitles='{source_path}'")
+            else:
+                # remap subtitle
+                ffmpeg_call.append(f"subtitles='{source_path}:si={sub_idx}'")
+        ffmpeg_call.append(target_path)
+        print(" ".join(ffmpeg_call), flush=True)
+        subprocess.run(ffmpeg_call)
+
     # metadata json
     duration = ffprobe_duration(target_path)
     if duration is None:
         return False
-    url = f"{NISEMONO}{os.path.basename(target_dir)}/{quote(basename)}.{MP4}"
+    prefix = os.path.basename(target_dir.strip("/"))
+    url = f"{NISEMONO}{prefix}/{quote(basename)}.{MP4}"
     metadata = {
         "title": basename,
         "duration": duration,
@@ -157,7 +162,7 @@ def process(source_dir, target_dir, filename):
     metadata_path = os.path.join(target_dir, basename + ".json")
     with open(metadata_path, "w") as fn:
         json.dump(metadata, fn)
-    return source_path, target_path, metadata_path, url
+    return source_path, target_path, metadata_path, f"{NISEMONO}{prefix}/{quote(basename)}.json"
 
 
 def deluge_post(tid, tname, tpath):
@@ -187,6 +192,7 @@ def local_process(tpath):
     scp = SCPClient(ssh.get_transport())
 
     uploaded = []
+    prefix = os.path.basename(tpath.strip("/"))
     for filename in os.listdir(tpath):
         if not filename.endswith(MKV):
             continue
@@ -194,8 +200,8 @@ def local_process(tpath):
         if not result:
             continue
         _, target_path, metadata_path, url = result
-        scp.put(target_path, remote_path=f"/var/www/uploads/{os.path.basename(tpath)}")
-        scp.put(metadata_path, remote_path=f"/var/www/uploads/{os.path.basename(tpath)}")
+        scp.put(target_path, remote_path=f"/var/www/uploads/{prefix}/")
+        scp.put(metadata_path, remote_path=f"/var/www/uploads/{prefix}/")
         uploaded.append(url)
 
     print(",".join(uploaded))
