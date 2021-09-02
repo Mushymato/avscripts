@@ -75,7 +75,7 @@ def ffprobe_duration(source_path):
 
 
 def process(source_dir, target_dir, filename):
-    print(f"process({source_dir!r}, {target_dir!r}, {filename!r}) ", flush=True, end="")
+    print(f"process({source_dir!r}, {target_dir!r}, {filename!r}) ", flush=True)
     source_path = FFMPEG_ESCAPE.sub(r"\\\1", os.path.join(source_dir, filename))
     basename = os.path.splitext(filename)[0]
     target_path = FFMPEG_ESCAPE.sub(r"\\\1", os.path.join(target_dir, basename + "." + MP4))
@@ -112,7 +112,8 @@ def process(source_dir, target_dir, filename):
             audio_idx = idx
             break
     if audio_idx is not None and audio_idx != 0:
-        ffmpeg_call.append(f"-map 0:a:{audio_idx}")
+        ffmpeg_call.append("-map")
+        ffmpeg_call.append(f"0:a:{audio_idx}")
     # check which sub track to use
     sub_tracks = ffprobe_streams(source_path, "s")
     sub_idx = None
@@ -134,6 +135,7 @@ def process(source_dir, target_dir, filename):
             # remap subtitle
             ffmpeg_call.append(f"subtitles='{source_path}:si={sub_idx}'")
     ffmpeg_call.append(target_path)
+    print(" ".join(ffmpeg_call), flush=True)
     subprocess.run(ffmpeg_call)
     # metadata json
     duration = ffprobe_duration(target_path)
@@ -155,7 +157,6 @@ def process(source_dir, target_dir, filename):
     metadata_path = os.path.join(target_dir, basename + ".json")
     with open(metadata_path, "w") as fn:
         json.dump(metadata, fn)
-    print("done")
     return source_path, target_path, metadata_path, url
 
 
