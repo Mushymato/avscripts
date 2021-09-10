@@ -6,10 +6,10 @@ import subprocess
 import json
 from urllib.parse import quote
 
-STAGING_TORRENT_DIR = os.path.abspath("D:\Downloads\avscripts\staging")
+STAGING_TORRENT_DIR = os.path.abspath("D:\\Downloads\\avscripts\\staging")
+TARGET_SERVING_DIR = os.path.abspath("D:\\xampp\\htdocs\\uploads")
 TAG_LANGUAGE = "TAG:language"
 SUB_EVAL_KEY = "TAG:NUMBER_OF_FRAMES-eng"
-FFMPEG_ESCAPE = re.compile(r"([\\'])")
 
 NISEMONO = "https://u.nisemo.no/"
 MKV = ".mkv"
@@ -76,70 +76,80 @@ def ffprobe_duration(source_path):
 
 def process(source_dir, target_dir, filename):
     print(f"process({source_dir!r}, {target_dir!r}, {filename!r}) ", flush=True)
-    source_path = FFMPEG_ESCAPE.sub(r"\\\1", os.path.join(source_dir, filename))
+    source_path = os.path.join(source_dir, filename)
+    # ffmpeg rly hates single quotes in filter_complex stuff
+    if "'" in filename:
+        filename = filename.replace("'", "")
+        new_source = os.path.join(source_dir, filename)
+        os.rename(source_path, new_source)
+        source_path = new_source
     basename = os.path.splitext(filename)[0]
-    target_path = FFMPEG_ESCAPE.sub(r"\\\1", os.path.join(target_dir, basename + "." + MP4))
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, basename + "." + MP4)
 
-    if not os.path.exists(target_path):
-        ffmpeg_call = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-stats",
-            "-y",
-            "-i",
-            source_path,
-            "-movflags",
-            "+faststart",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "23",
-            "-preset",
-            "veryfast",
-            "-tune",
-            "animation",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-        ]
-        # check which audio track to use
-        audio_tracks = ffprobe_streams(source_path, "a")
-        audio_idx = None
-        for idx, data in enumerate(audio_tracks):
-            if data.get(TAG_LANGUAGE) != "jpn":
-                continue
-            if audio_idx is None:
-                audio_idx = idx
-                break
-        if audio_idx is not None and audio_idx != 0:
-            ffmpeg_call.append("-map")
-            ffmpeg_call.append(f"0:a:{audio_idx}")
-        # check which sub track to use
-        sub_tracks = ffprobe_streams(source_path, "s")
-        sub_idx = None
-        for idx, data in enumerate(sub_tracks):
-            if data.get(TAG_LANGUAGE) != "eng":
-                continue
-            if sub_idx is None or sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0):
-                sub_idx = idx
-        if sub_idx is not None:
-            sub = sub_tracks[sub_idx]
-            ffmpeg_call.append("-filter_complex")
-            if sub.get("codec_name") == "dvdsub":
-                # bitmap subs from old dvd rips
-                ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
-            elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
-                # already default sub track
-                ffmpeg_call.append(f"subtitles='{source_path}'")
-            else:
-                # remap subtitle
-                ffmpeg_call.append(f"subtitles='{source_path}:si={sub_idx}'")
-        ffmpeg_call.append(target_path)
-        print(" ".join(ffmpeg_call), flush=True)
-        subprocess.run(ffmpeg_call)
+    ffmpeg_call = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-stats",
+        "-y",
+        "-i",
+        source_path,
+        "-movflags",
+        "+faststart",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "animation",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+    ]
+    # check which audio track to use
+    audio_tracks = ffprobe_streams(source_path, "a")
+    audio_idx = None
+    for idx, data in enumerate(audio_tracks):
+        if data.get(TAG_LANGUAGE) != "jpn":
+            continue
+        if audio_idx is None:
+            audio_idx = idx
+            break
+    if audio_idx is not None and audio_idx != 0:
+        ffmpeg_call.append("-map")
+        ffmpeg_call.append(f"0:a:{audio_idx}")
+    # check which sub track to use
+    sub_tracks = ffprobe_streams(source_path, "s")
+    sub_idx = None
+    for idx, data in enumerate(sub_tracks):
+        if sub_idx is None:
+            sub_idx = idx
+        if data.get(TAG_LANGUAGE) != "eng":
+            continue
+        if sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0):
+            sub_idx = idx
+    if sub_idx is not None:
+        sub = sub_tracks[sub_idx]
+        ffmpeg_call.append("-filter_complex")
+        # dum
+        escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
+        if sub.get("codec_name") == "dvdsub":
+            # bitmap subs from old dvd rips
+            ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
+        elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
+            # already default sub track
+            ffmpeg_call.append(f"subtitles='{escaped_source}'")
+        else:
+            # remap subtitle
+            ffmpeg_call.append(f"subtitles='{escaped_source}:si={sub_idx}'")
+    ffmpeg_call.append(target_path)
+    print(" ".join(ffmpeg_call), flush=True)
+    subprocess.run(ffmpeg_call)
 
     # metadata json
     duration = ffprobe_duration(target_path)
@@ -168,14 +178,19 @@ def process(source_dir, target_dir, filename):
 def deluge_post(tid, tname, tpath):
     # change to deluge-console eventually
     torrent_dir = os.path.abspath(tpath)
+    print(torrent_dir)
     if not STAGING_TORRENT_DIR in torrent_dir:
         return
 
+    prefix = os.path.basename(torrent_dir.replace(STAGING_TORRENT_DIR, "").strip("/"))
+    target_dir = os.path.join(TARGET_SERVING_DIR, prefix)
     for root, _, files in os.walk(torrent_dir):
         for filename in files:
             if not filename.endswith(MKV):
                 continue
-            # TODO: finish this stuff
+            process(root, target_dir, filename)
+
+    # need to remove the torrent somehow
 
 
 def local_process(tpath):
@@ -200,6 +215,7 @@ def local_process(tpath):
         if not result:
             continue
         _, target_path, metadata_path, url = result
+        print(url)
         scp.put(target_path, remote_path=f"/var/www/uploads/{prefix}/")
         scp.put(metadata_path, remote_path=f"/var/www/uploads/{prefix}/")
         uploaded.append(url)
@@ -208,7 +224,11 @@ def local_process(tpath):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 2:
-        local_process(sys.argv[1])
+    if len(sys.argv) <= 2:
+        try:
+            tpath = sys.argv[1]
+        except IndexError:
+            tpath = "./"
+        local_process(tpath)
     else:
         deluge_post(sys.argv[1], sys.argv[2], sys.argv[3])
