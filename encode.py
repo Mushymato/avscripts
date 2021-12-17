@@ -11,9 +11,15 @@ TARGET_SERVING_DIR = os.path.abspath("D:\\xampp\\htdocs\\uploads")
 TAG_LANGUAGE = "TAG:language"
 SUB_EVAL_KEY = "TAG:NUMBER_OF_FRAMES-eng"
 
+IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub")
+
 NISEMONO = "https://u.nisemo.no/"
 MKV = ".mkv"
 MP4 = "mp4"
+
+
+def scp_progress(filename, size, sent):
+    sys.stdout.write(f"{str(filename)}: {float(sent) / float(size):.2%}\r")
 
 
 def ffprobe_streams(source_path, stream_type):
@@ -138,7 +144,7 @@ def process(source_dir, target_dir, filename):
         ffmpeg_call.append("-filter_complex")
         # dum
         escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
-        if sub.get("codec_name") == "dvdsub":
+        if sub.get("codec_name") in IMAGE_BASED_SUBS:
             # bitmap subs from old dvd rips
             ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
         elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
@@ -197,14 +203,14 @@ def local_process(tpath):
     import paramiko
     from scp import SCPClient
 
-    with open("./scp_args.json", "r") as fn:
+    with open("./scp_args", "r") as fn:
         scp_args = json.load(fn)
 
     ssh = paramiko.SSHClient()
     ssh.load_system_host_keys()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(scp_args["server"], scp_args["port"], scp_args["user"], scp_args["password"])
-    scp = SCPClient(ssh.get_transport())
+    scp = SCPClient(ssh.get_transport(), progress=scp_progress)
 
     uploaded = []
     prefix = os.path.basename(tpath.strip("/"))
