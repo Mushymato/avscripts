@@ -94,8 +94,7 @@ def process(source_dir, target_dir, filename):
     os.makedirs(target_dir, exist_ok=True)
     target_path = os.path.join(target_dir, basename + "." + MP4)
 
-    # if not os.path.isfile(target_path):
-    if True:
+    if not os.path.isfile(target_path):
         ffmpeg_call = [
             "ffmpeg",
             "-hide_banner",
