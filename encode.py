@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import os
-import re
+import glob
 import subprocess
 import json
 from urllib.parse import quote
@@ -16,7 +16,59 @@ IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub")
 
 NISEMONO = "https://u.nisemo.no/"
 MKV = ".mkv"
-MP4 = "mp4"
+MP4 = ".mp4"
+WEBM = ".webm"
+VTT = ".vtt"
+SUB_EXTS = (".srt", ".ass")
+
+
+def get_ffmpeg_call(source_path, ext):
+    if ext == MP4:
+        return [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-stats",
+            "-y",
+            "-i",
+            source_path,
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "23",
+            "-preset",
+            "veryfast",
+            # "-tune",
+            # "animation",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+        ]
+    elif ext == WEBM:
+        return [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-stats",
+            "-y",
+            "-i",
+            source_path,
+            "-movflags",
+            "+faststart",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "51",
+            "-c:v",
+            "libvpx-vp9",
+            "-c:a",
+            "libvorbis",
+        ]
 
 
 def scp_progress(filename, size, sent):
@@ -81,7 +133,7 @@ def ffprobe_duration(source_path):
         return None
 
 
-def process(source_dir, target_dir, filename):
+def process(source_dir, target_dir, filename, ext=MP4):
     print(f"process({source_dir!r}, {target_dir!r}, {filename!r}) ", flush=True)
     source_path = os.path.join(source_dir, filename)
     # ffmpeg rly hates single quotes in filter_complex stuff
@@ -92,33 +144,22 @@ def process(source_dir, target_dir, filename):
         source_path = new_source
     basename = os.path.splitext(filename)[0]
     os.makedirs(target_dir, exist_ok=True)
-    target_path = os.path.join(target_dir, basename + "." + MP4)
+    target_basename = basename.replace(".x265-RARBG", "")
+    target_path = os.path.join(target_dir, target_basename + ext)
+
+    vtt_subs = False
+    # check for external subs, and convert them to vtt
+    if os.path.isfile(os.path.join(target_dir, target_basename + VTT)):
+        vtt_subs = True
+    else:
+        for file_path in glob.glob(os.path.join(target_dir, basename + ".*")):
+            if any((file_path.endswith(sub_ext) for sub_ext in SUB_EXTS)):
+                subprocess.run(["ffmpeg", "-i", file_path, os.path.join(target_dir, target_basename + VTT)])
+                vtt_subs = True
+                break
 
     if not os.path.isfile(target_path):
-        ffmpeg_call = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-stats",
-            "-y",
-            "-i",
-            source_path,
-            "-movflags",
-            "+faststart",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "23",
-            "-preset",
-            "veryfast",
-            "-tune",
-            "animation",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-        ]
+        ffmpeg_call = get_ffmpeg_call(source_path, ext)
         # check which audio track to use
         audio_tracks = ffprobe_streams(source_path, "a")
         audio_idx = None
@@ -132,34 +173,35 @@ def process(source_dir, target_dir, filename):
             ffmpeg_call.append("-map")
             ffmpeg_call.append(f"0:a:{audio_idx}")
         # check which sub track to use
-        sub_tracks = ffprobe_streams(source_path, "s")
-        if sub_tracks:
-            sub_idx = None
-            img_sub_idx = None
-            for idx, data in enumerate(sub_tracks):
-                if data.get(TAG_LANGUAGE) != "eng":
-                    continue
-                if sub_idx is None or (sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)):
-                    if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
-                        img_sub_idx = idx
+        if not vtt_subs:
+            sub_tracks = ffprobe_streams(source_path, "s")
+            if sub_tracks:
+                sub_idx = None
+                img_sub_idx = None
+                for idx, data in enumerate(sub_tracks):
+                    if data.get(TAG_LANGUAGE) != "eng":
+                        continue
+                    if sub_idx is None or (sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)):
+                        if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
+                            img_sub_idx = idx
+                        else:
+                            sub_idx = idx
+                if sub_idx is None:
+                    sub_idx = img_sub_idx or 0
+                if sub_idx is not None:
+                    sub = sub_tracks[sub_idx]
+                    ffmpeg_call.append("-filter_complex")
+                    # dum
+                    escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
+                    if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
+                        # bitmap subs from old dvd rips
+                        ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
+                    elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
+                        # already default sub track
+                        ffmpeg_call.append(f"subtitles='{escaped_source}'")
                     else:
-                        sub_idx = idx
-            if sub_idx is None:
-                sub_idx = img_sub_idx or 0
-            if sub_idx is not None:
-                sub = sub_tracks[sub_idx]
-                ffmpeg_call.append("-filter_complex")
-                # dum
-                escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
-                if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
-                    # bitmap subs from old dvd rips
-                    ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
-                elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
-                    # already default sub track
-                    ffmpeg_call.append(f"subtitles='{escaped_source}'")
-                else:
-                    # remap subtitle
-                    ffmpeg_call.append(f"subtitles='{escaped_source}:si={sub_idx}'")
+                        # remap subtitle
+                        ffmpeg_call.append(f"subtitles='{escaped_source}:si={sub_idx}'")
         ffmpeg_call.append(target_path)
         print(" ".join(ffmpeg_call), flush=True)
         subprocess.run(ffmpeg_call)
@@ -169,7 +211,7 @@ def process(source_dir, target_dir, filename):
     if duration is None:
         return False
     prefix = os.path.basename(target_dir.strip("/"))
-    url = f"{NISEMONO}{prefix}/{quote(basename)}.{MP4}"
+    url = f"{NISEMONO}{prefix}/{quote(basename)}{ext}"
     metadata = {
         "title": basename,
         "duration": duration,
@@ -177,11 +219,21 @@ def process(source_dir, target_dir, filename):
         "sources": [
             {
                 "url": url,
-                "contentType": f"video/{MP4}",
+                "contentType": f"video/{ext[1:]}",
                 "quality": 1080,
             }
         ],
     }
+    if vtt_subs:
+        metadata["textTracks"] = [
+            {
+                "url": f"{NISEMONO}{prefix}/{quote(basename)}{VTT}",
+                "contentType": "text/vtt",
+                "name": "English subtitles",
+                "default": True,
+            }
+        ]
+
     metadata_path = os.path.join(target_dir, basename + ".json")
     with open(metadata_path, "w") as fn:
         json.dump(metadata, fn)
