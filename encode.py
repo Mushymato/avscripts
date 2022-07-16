@@ -148,13 +148,14 @@ def process(source_dir, target_dir, filename, ext=MP4):
     target_path = os.path.join(target_dir, target_basename + ext)
 
     vtt_subs = False
+    vtt_sub_path = os.path.join(target_dir, target_basename + VTT)
     # check for external subs, and convert them to vtt
-    if os.path.isfile(os.path.join(target_dir, target_basename + VTT)):
+    if os.path.isfile(vtt_sub_path):
         vtt_subs = True
     else:
         for file_path in glob.glob(os.path.join(target_dir, basename + ".*")):
             if any((file_path.endswith(sub_ext) for sub_ext in SUB_EXTS)):
-                subprocess.run(["ffmpeg", "-i", file_path, os.path.join(target_dir, target_basename + VTT)])
+                subprocess.run(["ffmpeg", "-i", file_path, vtt_sub_path])
                 vtt_subs = True
                 break
 
@@ -211,9 +212,9 @@ def process(source_dir, target_dir, filename, ext=MP4):
     if duration is None:
         return False
     prefix = os.path.basename(target_dir.strip("/"))
-    url = f"{NISEMONO}{prefix}/{quote(basename)}{ext}"
+    url = f"{NISEMONO}{prefix}/{quote(target_basename)}{ext}"
     metadata = {
-        "title": basename,
+        "title": target_basename,
         "duration": duration,
         "live": False,
         "sources": [
@@ -227,17 +228,17 @@ def process(source_dir, target_dir, filename, ext=MP4):
     if vtt_subs:
         metadata["textTracks"] = [
             {
-                "url": f"{NISEMONO}{prefix}/{quote(basename)}{VTT}",
+                "url": f"{NISEMONO}{prefix}/{quote(target_basename)}{VTT}",
                 "contentType": "text/vtt",
-                "name": "English subtitles",
+                "name": "English",
                 "default": True,
             }
         ]
 
-    metadata_path = os.path.join(target_dir, basename + ".json")
+    metadata_path = os.path.join(target_dir, target_basename + ".json")
     with open(metadata_path, "w") as fn:
         json.dump(metadata, fn)
-    return source_path, target_path, metadata_path, f"{NISEMONO}{prefix}/{quote(basename)}.json"
+    return source_path, target_path, metadata_path, vtt_sub_path, f"{NISEMONO}{prefix}/{quote(target_basename)}.json"
 
 
 def deluge_post(tid, tname, tpath):
@@ -274,14 +275,16 @@ def local_process(tpath):
     uploaded = []
     prefix = os.path.basename(tpath.strip("/"))
     for filename in sorted(os.listdir(tpath)):
-        if not filename.endswith(MKV):
+        if not filename.endswith(MP4):
             continue
         result = process(tpath, tpath, filename)
         if not result:
             continue
-        _, target_path, metadata_path, url = result
+        _, target_path, metadata_path, vtt_sub_path, url = result
         scp.put(target_path, remote_path=f"/var/www/uploads/{prefix}/")
         scp.put(metadata_path, remote_path=f"/var/www/uploads/{prefix}/")
+        if vtt_sub_path:
+            scp.put(vtt_sub_path, remote_path=f"/var/www/uploads/{prefix}/")
         uploaded.append(url)
 
     print()
