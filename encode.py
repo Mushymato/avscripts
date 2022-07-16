@@ -49,6 +49,7 @@ def get_ffmpeg_call(source_path, ext):
             "aac",
         ]
     elif ext == WEBM:
+        # too slow and or shit looking to use atm
         return [
             "ffmpeg",
             "-hide_banner",
@@ -58,12 +59,12 @@ def get_ffmpeg_call(source_path, ext):
             "-y",
             "-i",
             source_path,
-            "-movflags",
-            "+faststart",
-            "-preset",
-            "veryfast",
+            # "-deadline",
+            # "realtime",
+            # "-cpu-used",
+            # "4",
             "-crf",
-            "51",
+            "30",
             "-c:v",
             "libvpx-vp9",
             "-c:a",
@@ -275,7 +276,7 @@ def local_process(tpath):
     uploaded = []
     prefix = os.path.basename(tpath.strip("/"))
     for filename in sorted(os.listdir(tpath)):
-        if not filename.endswith(MP4):
+        if not filename.endswith(MKV) and not filename.endswith(".x265-RARBG" + MP4):
             continue
         result = process(tpath, tpath, filename)
         if not result:
