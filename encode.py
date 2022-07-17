@@ -235,6 +235,8 @@ def process(source_dir, target_dir, filename, ext=MP4):
                 "default": True,
             }
         ]
+    else:
+        vtt_sub_path = None
 
     metadata_path = os.path.join(target_dir, target_basename + ".json")
     with open(metadata_path, "w") as fn:
