@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import shutil
 import sys
 import os
 import glob
@@ -196,8 +197,8 @@ def process(source_dir, target_dir, filename, ext=MP4):
                     # dum
                     escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
                     if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
-                        # bitmap subs from old dvd rips
-                        ffmpeg_call.append(f"[0:v][{sub_idx}:s]overlay")
+                        # bitmap subs from bd/dvd
+                        ffmpeg_call.append(f"[0:v][0:s:{sub_idx}]overlay")
                     elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
                         # already default sub track
                         ffmpeg_call.append(f"subtitles='{escaped_source}'")
@@ -289,6 +290,8 @@ def local_process(tpath):
         if vtt_sub_path:
             scp.put(vtt_sub_path, remote_path=f"/var/www/uploads/{prefix}/")
         uploaded.append(url)
+        if prefix == "seasonal":
+            shutil.move(os.path.join(tpath, filename), os.path.join(tpath, "done"))
 
     print()
     print(",".join(uploaded))
