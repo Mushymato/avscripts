@@ -6,11 +6,14 @@ import glob
 import subprocess
 import json
 from urllib.parse import quote
+from pprint import pprint
 
 STAGING_TORRENT_DIR = os.path.abspath("D:\\Downloads\\avscripts\\staging")
 TARGET_SERVING_DIR = os.path.abspath("D:\\xampp\\htdocs\\uploads")
 TAG_LANGUAGE = "TAG:language"
-SUB_EVAL_KEY = "TAG:NUMBER_OF_FRAMES-eng"
+DISPOSITION_DEFAULT = "DISPOSITION:default"
+# SUB_EVAL_KEY = "TAG:NUMBER_OF_FRAMES-eng"
+SUB_EVAL_KEY = "TAG:NUMBER_OF_BYTES-eng"
 CODEC_NAME = "codec_name"
 
 IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub")
@@ -166,15 +169,15 @@ def process(source_dir, target_dir, filename, ext=MP4):
         # check which audio track to use
         audio_tracks = ffprobe_streams(source_path, "a")
         audio_idx = None
+        default_idx = 0
         for idx, data in enumerate(audio_tracks):
-            if data.get(TAG_LANGUAGE) != "jpn":
-                continue
-            if audio_idx is None:
+            if data.get(DISPOSITION_DEFAULT):
+                default_idx = idx
+            if data.get(TAG_LANGUAGE) == "jpn" and audio_idx is None:
                 audio_idx = idx
-                break
-        if audio_idx is not None and audio_idx != 0:
+        if audio_idx not in (default_idx, None):
             ffmpeg_call.append("-map")
-            ffmpeg_call.append(f"0:a:{audio_idx}")
+            ffmpeg_call.append(f"{default_idx}:a:{audio_idx}")
         # check which sub track to use
         if not vtt_subs:
             sub_tracks = ffprobe_streams(source_path, "s")
@@ -198,6 +201,7 @@ def process(source_dir, target_dir, filename, ext=MP4):
                     escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
                     if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
                         # bitmap subs from bd/dvd
+                        # overlay=x=-240:y=0 to adjust positions when needed
                         ffmpeg_call.append(f"[0:v][0:s:{sub_idx}]overlay")
                     elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
                         # already default sub track
