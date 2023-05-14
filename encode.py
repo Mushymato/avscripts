@@ -13,7 +13,7 @@ TARGET_SERVING_DIR = os.path.abspath("D:\\xampp\\htdocs\\uploads")
 TAG_LANGUAGE = "TAG:language"
 DISPOSITION_DEFAULT = "DISPOSITION:default"
 # SUB_EVAL_KEY = "TAG:NUMBER_OF_FRAMES-eng"
-SUB_EVAL_KEY = "TAG:NUMBER_OF_BYTES-eng"
+SUB_EVAL_KEY = "TAG:BPS-eng"
 CODEC_NAME = "codec_name"
 
 IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub")
@@ -187,11 +187,12 @@ def process(source_dir, target_dir, filename, ext=MP4):
                 for idx, data in enumerate(sub_tracks):
                     if data.get(TAG_LANGUAGE) != "eng":
                         continue
-                    if sub_idx is None or (sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)):
-                        if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
+                    print(data[SUB_EVAL_KEY])
+                    if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
+                        if img_sub_idx is None or (sub_tracks[img_sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)):
                             img_sub_idx = idx
-                        else:
-                            sub_idx = idx
+                    elif sub_idx is None or (sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)):
+                        sub_idx = idx
                 if sub_idx is None:
                     sub_idx = img_sub_idx or 0
                 if sub_idx is not None:
