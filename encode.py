@@ -12,8 +12,7 @@ STAGING_TORRENT_DIR = os.path.abspath("D:\\Downloads\\avscripts\\staging")
 TARGET_SERVING_DIR = os.path.abspath("D:\\xampp\\htdocs\\uploads")
 TAG_LANGUAGE = "TAG:language"
 DISPOSITION_DEFAULT = "DISPOSITION:default"
-# SUB_EVAL_KEY = "TAG:NUMBER_OF_FRAMES-eng"
-SUB_EVAL_KEY = "TAG:BPS-eng"
+SUB_EVAL_KEY = "TAG:NUMBER_OF_BYTES-eng"
 CODEC_NAME = "codec_name"
 
 IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub")
@@ -23,7 +22,8 @@ MKV = ".mkv"
 MP4 = ".mp4"
 WEBM = ".webm"
 VTT = ".vtt"
-SUB_EXTS = (".srt", ".ass")
+SRT = ".srt"
+ASS = ".ass"
 
 
 def get_ffmpeg_call(source_path, ext):
@@ -155,13 +155,24 @@ def process(source_dir, target_dir, filename, ext=MP4):
     vtt_subs = False
     vtt_sub_path = os.path.join(target_dir, target_basename + VTT)
     # check for external subs, and convert them to vtt
+    ass_subs = None
     if os.path.isfile(vtt_sub_path):
         vtt_subs = True
     else:
-        for file_path in glob.glob(os.path.join(target_dir, basename + ".*")):
-            if any((file_path.endswith(sub_ext) for sub_ext in SUB_EXTS)):
-                subprocess.run(["ffmpeg", "-i", file_path, vtt_sub_path])
+        # for file_path in glob.glob(os.path.join(target_dir, basename + ".*")):
+        #     if any((file_path.endswith(sub_ext) for sub_ext in SUB_EXTS)):
+        #         subprocess.run(["ffmpeg", "-i", file_path, vtt_sub_path])
+        #         vtt_subs = True
+        #         break
+        for file_path in os.listdir(target_dir):
+            if not file_path.startswith(basename):
+                continue
+            if file_path.endswith(SRT):
+                subprocess.run(["ffmpeg", "-i", os.path.join(target_dir, file_path), vtt_sub_path])
                 vtt_subs = True
+                break
+            if file_path.endswith(ASS):
+                ass_subs = os.path.join(target_dir, file_path)
                 break
 
     if not os.path.isfile(target_path):
@@ -179,7 +190,11 @@ def process(source_dir, target_dir, filename, ext=MP4):
             ffmpeg_call.append("-map")
             ffmpeg_call.append(f"{default_idx}:a:{audio_idx}")
         # check which sub track to use
-        if not vtt_subs:
+        if ass_subs:
+            ffmpeg_call.append("-filter_complex")
+            escaped_ass = ass_subs.replace("\\", "\\\\\\").replace(":", "\:")
+            ffmpeg_call.append(f"subtitles='{escaped_ass}'")
+        elif not vtt_subs:
             sub_tracks = ffprobe_streams(source_path, "s")
             if sub_tracks:
                 sub_idx = None
@@ -187,7 +202,6 @@ def process(source_dir, target_dir, filename, ext=MP4):
                 for idx, data in enumerate(sub_tracks):
                     if data.get(TAG_LANGUAGE) != "eng":
                         continue
-                    print(data[SUB_EVAL_KEY])
                     if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
                         if img_sub_idx is None or (sub_tracks[img_sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)):
                             img_sub_idx = idx
