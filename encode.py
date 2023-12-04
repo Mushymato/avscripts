@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
+import argparse
 import hashlib
 import shutil
 import sys
 import os
-import glob
 import base64
 import subprocess
 import json
@@ -31,53 +31,53 @@ JSON = ".json"
 
 
 def get_ffmpeg_call(source_path, ext):
+    ffmpeg_call = [
+        "nice",
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-stats",
+        "-y",
+        "-i",
+        source_path,
+    ]
     if ext == MP4:
-        return [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-stats",
-            "-y",
-            "-i",
-            source_path,
-            "-movflags",
-            "+faststart",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "23",
-            "-preset",
-            "veryfast",
-            # "-tune",
-            # "animation",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-        ]
+        ffmpeg_call.extend(
+            [
+                "-movflags",
+                "+faststart",
+                "-pix_fmt",
+                "yuv420p",
+                "-crf",
+                "25",
+                "-preset",
+                "veryfast",
+                # "-tune",
+                # "animation",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+            ]
+        )
     elif ext == WEBM:
-        # too slow and or shit looking to use atm
-        return [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-stats",
-            "-y",
-            "-i",
-            source_path,
-            # "-deadline",
-            # "realtime",
-            # "-cpu-used",
-            # "4",
-            "-crf",
-            "30",
-            "-c:v",
-            "libvpx-vp9",
-            "-c:a",
-            "libvorbis",
-        ]
+        # bad settings, need more fiddling
+        ffmpeg_call.extend(
+            [
+                "-deadline",
+                "realtime",
+                "-cpu-used",
+                "4",
+                "-crf",
+                "30",
+                "-c:v",
+                "libvpx-vp9",
+                "-c:a",
+                "libvorbis",
+            ]
+        )
+    return ffmpeg_call
 
 
 def scp_progress(filename, size, sent):
@@ -142,8 +142,66 @@ def ffprobe_duration(source_path):
         return None
 
 
+def get_audio_track(source_path):
+    audio_tracks = ffprobe_streams(source_path, "a")
+    audio_idx = None
+    default_idx = 0
+    for idx, data in enumerate(audio_tracks):
+        if data.get(DISPOSITION_DEFAULT):
+            default_idx = idx
+        if data.get(TAG_LANGUAGE) == "jpn" and audio_idx is None:
+            audio_idx = idx
+    if audio_idx not in (default_idx, None):
+        return ["-map", f"{default_idx}:a:{audio_idx}"]
+    return tuple()
+
+
+def get_subtitle_track(source_path, ass_subs, vtt_subs):
+    # check which sub track to use
+    if ass_subs:
+        escaped_ass = ass_subs.replace("\\", "\\\\\\").replace(":", "\:")
+        return ["-filter_complex", f"subtiltes='{escaped_ass}'"]
+    elif not vtt_subs:
+        sub_tracks = ffprobe_streams(source_path, "s")
+        if sub_tracks:
+            sub_idx = None
+            img_sub_idx = None
+            for idx, data in enumerate(sub_tracks):
+                if data.get(TAG_LANGUAGE) != "eng":
+                    continue
+                if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
+                    if img_sub_idx is None or (
+                        sub_tracks[img_sub_idx].get(SUB_EVAL_KEY, 0)
+                        < data.get(SUB_EVAL_KEY, 0)
+                    ):
+                        img_sub_idx = idx
+                elif sub_idx is None or (
+                    sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)
+                ):
+                    sub_idx = idx
+            if sub_idx is None:
+                sub_idx = img_sub_idx or 0
+            if sub_idx is not None:
+                sub = sub_tracks[sub_idx]
+                ffmpeg_args = ["-filter_complex"]
+                # dum
+                escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
+                if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
+                    # bitmap subs from bd/dvd
+                    # overlay=x=-240:y=0 to adjust positions when needed
+                    ffmpeg_args.append(f"[0:v][0:s:{sub_idx}]overlay")
+                elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
+                    # already default sub track
+                    ffmpeg_args.append(f"subtitles='{escaped_source}'")
+                else:
+                    # remap subtitle
+                    ffmpeg_args.append(f"subtitles='{escaped_source}:si={sub_idx}'")
+                return ffmpeg_args
+    return []
+
+
 def process(source_dir, target_dir, filename, ext=MP4):
-    print(f"process({source_dir!r}, {target_dir!r}, {filename!r}) ", flush=True)
+    print(f"process({source_dir}/{filename})", flush=True)
     source_path = os.path.join(source_dir, filename)
     # ffmpeg rly hates single quotes in filter_complex stuff
     if "'" in filename:
@@ -183,61 +241,8 @@ def process(source_dir, target_dir, filename, ext=MP4):
 
     if not os.path.isfile(target_path):
         ffmpeg_call = get_ffmpeg_call(source_path, ext)
-        # check which audio track to use
-        audio_tracks = ffprobe_streams(source_path, "a")
-        audio_idx = None
-        default_idx = 0
-        for idx, data in enumerate(audio_tracks):
-            if data.get(DISPOSITION_DEFAULT):
-                default_idx = idx
-            if data.get(TAG_LANGUAGE) == "jpn" and audio_idx is None:
-                audio_idx = idx
-        if audio_idx not in (default_idx, None):
-            ffmpeg_call.append("-map")
-            ffmpeg_call.append(f"{default_idx}:a:{audio_idx}")
-        # check which sub track to use
-        if ass_subs:
-            ffmpeg_call.append("-filter_complex")
-            escaped_ass = ass_subs.replace("\\", "\\\\\\").replace(":", "\:")
-            ffmpeg_call.append(f"subtitles='{escaped_ass}'")
-        elif not vtt_subs:
-            sub_tracks = ffprobe_streams(source_path, "s")
-            if sub_tracks:
-                sub_idx = None
-                img_sub_idx = None
-                for idx, data in enumerate(sub_tracks):
-                    if data.get(TAG_LANGUAGE) != "eng":
-                        continue
-                    if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
-                        if img_sub_idx is None or (
-                            sub_tracks[img_sub_idx].get(SUB_EVAL_KEY, 0)
-                            < data.get(SUB_EVAL_KEY, 0)
-                        ):
-                            img_sub_idx = idx
-                    elif sub_idx is None or (
-                        sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0)
-                        < data.get(SUB_EVAL_KEY, 0)
-                    ):
-                        sub_idx = idx
-                if sub_idx is None:
-                    sub_idx = img_sub_idx or 0
-                if sub_idx is not None:
-                    sub = sub_tracks[sub_idx]
-                    ffmpeg_call.append("-filter_complex")
-                    # dum
-                    escaped_source = source_path.replace("\\", "\\\\\\").replace(
-                        ":", "\:"
-                    )
-                    if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
-                        # bitmap subs from bd/dvd
-                        # overlay=x=-240:y=0 to adjust positions when needed
-                        ffmpeg_call.append(f"[0:v][0:s:{sub_idx}]overlay")
-                    elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
-                        # already default sub track
-                        ffmpeg_call.append(f"subtitles='{escaped_source}'")
-                    else:
-                        # remap subtitle
-                        ffmpeg_call.append(f"subtitles='{escaped_source}:si={sub_idx}'")
+        ffmpeg_call.extend(get_audio_track(source_path))
+        ffmpeg_call.extend(get_subtitle_track(source_path, ass_subs, vtt_subs))
         ffmpeg_call.append(target_path)
         print(" ".join(ffmpeg_call), flush=True)
         subprocess.run(ffmpeg_call)
@@ -341,7 +346,8 @@ class BackblazeUploader:
         return self._send_req(req)
 
     def __init__(self) -> None:
-        # https://api.backblazeb2.com/b2api/v3/b2_authorize_account
+        self.count = 0
+        # b2 auth
         with open("./backblaze_args", "r") as fn:
             backblaze_args = json.load(fn)
         req = request.Request(
@@ -378,9 +384,13 @@ class BackblazeUploader:
         else:
             return f"video/{ext[1:]}"
 
-    @staticmethod
-    def _filename(prefix, basename, ext):
-        return f"{prefix}/{basename}{ext}"
+    def _filename(self, prefix, _basename, ext):
+        return f"{prefix}/{ext[1]}/{self.count:02}{ext}"
+
+    def _fileurl(self, filename):
+        return (
+            f"{self.api_url}/file/{self.bucket_name}/{parse.quote(filename, safe='/')}"
+        )
 
     def _upload_small_file(self, path, prefix):
         with open(path, "rb", buffering=0) as fn:
@@ -393,22 +403,15 @@ class BackblazeUploader:
         print(f"Upload {filename}")
         req.add_header("Authorization", self.upload_token)
         req.add_header("Content-Type", self._content_type(ext))
-        quoted_filename = parse.quote(filename, safe="/")
-        req.add_header("X-Bz-File-Name", quoted_filename.encode("utf8"))
+        req.add_header("X-Bz-File-Name", parse.quote(filename, safe="/").encode("utf8"))
         req.add_header("Content-Length", os.stat(path).st_size)
         req.add_header("X-Bz-Content-Sha1", file_sha1)
-        _upload_result = self._send_req(req)
-        return f"{self.api_url}/file/aminoacids/{quoted_filename}"
+        upload_result = self._send_req(req)
+        return self._fileurl(upload_result["fileName"])
 
     def _upload_large_file(self, path, prefix):
         basename, ext = os.path.splitext(os.path.basename(path))
         filename = self._filename(prefix, basename, ext)
-        # b2_list_file_names
-        filelist = self._send_api_req(
-            f"b2_list_file_names?bucketId={self.bucket_id}&startFileName={parse.quote(filename)}"
-        )
-        if filelist["files"]:
-            return f"{self.api_url}/b2api/v1/b2_download_file_by_id?fileId={filelist['files'][0]['fileId']}"
         # b2_start_large_file
         start_info = self._send_api_req(
             "b2_start_large_file",
@@ -431,12 +434,13 @@ class BackblazeUploader:
             part_number = 1
             part_count = os.stat(path).st_size // self.rec_part_size + 1
             all_sha1 = []
+            print("Part:", end="")
             with open(path, "rb", buffering=0) as fn:
                 while True:
                     chunk = fn.read(self.rec_part_size)
                     if not chunk:
                         break
-                    print(f"Part {part_number}/{part_count}")
+                    print(f" {part_number}/{part_count}", end="", flush=True)
                     req = request.Request(upload_url, data=chunk)
                     req.add_header("Authorization", upload_token)
                     req.add_header("Content-Length", len(chunk))
@@ -447,11 +451,12 @@ class BackblazeUploader:
                     self._send_req(req)
                     part_number += 1
             # b2_finish_large_file
-            finish_info = self._send_api_req(
+            upload_result = self._send_api_req(
                 "b2_finish_large_file",
                 {"fileId": file_id, "partSha1Array": all_sha1},
             )
-            return f"{self.api_url}/b2api/v1/b2_download_file_by_id?fileId={finish_info['fileId']}"
+            print()
+            return self._fileurl(upload_result["fileName"])
         except Exception as err:
             # b2_cancel_large_file
             cancel_info = self._send_api_req(
@@ -461,6 +466,7 @@ class BackblazeUploader:
             raise err
 
     def put(self, target_path, vtt_sub_path, prefix):
+        self.count += 1
         target_url = self._upload(target_path, prefix)
         vtt_sub_url = None
         if vtt_sub_path:
@@ -470,40 +476,99 @@ class BackblazeUploader:
         )
         return self._upload(metadata_path, prefix)
 
+    def print_urls(self, prefix):
+        # b2_list_file_names
+        result = self._send_api_req(
+            f"b2_list_file_names?bucketId={self.bucket_id}&prefix={prefix}/j/"
+        )
+        print(
+            ",".join(
+                self._fileurl(fileinfo["fileName"])
+                for fileinfo in result.get("files", tuple())
+            )
+        )
 
-def local_process(tpath, opath):
+    def remove_files(self, prefix):
+        # b2_list_file_names
+        result = self._send_api_req(
+            f"b2_list_file_names?bucketId={self.bucket_id}&prefix={prefix}/"
+        )
+        # b2_delete_file_version
+        for fileinfo in result.get("files", tuple()):
+            self._send_api_req(
+                "b2_delete_file_version",
+                {
+                    "fileName": fileinfo["fileName"],
+                    "fileId": fileinfo["fileId"],
+                },
+            )
+
+
+class DebugUploader:
+    def put(self, target_path, vtt_sub_path, prefix):
+        print(f"DEBUG: {target_path!r} {vtt_sub_path!r} {prefix!r}")
+        metadata_path = write_metadata(
+            target_path, target_path, vtt_sub_path, vtt_sub_path
+        )
+        return metadata_path
+
+
+def local_process(ipath, upt, opath, ext):
+    if not opath:
+        opath = os.path.join(ipath, ".out")
     uploaded = []
-    prefix = os.path.basename(tpath.strip("/"))
+    prefix = os.path.basename(ipath.strip("/"))
 
-    uploader = SCPUploader()
-    # uploader = BackblazeUploader()
+    if upt == "scp":
+        uploader = SCPUploader()
+    elif upt == "b2":
+        uploader = BackblazeUploader()
+    else:
+        uploader = DebugUploader()
 
-    for filename in sorted(os.listdir(tpath)):
+    for filename in sorted(os.listdir(ipath)):
         if not filename.endswith(MKV) and not filename.endswith(MP4):
             continue
-        result = process(tpath, opath, filename)
+        result = process(ipath, opath, filename, ext=ext)
         if not result:
             continue
         target_path, vtt_sub_path = result
         url = uploader.put(target_path, vtt_sub_path, prefix)
         uploaded.append(url)
-        if prefix == "seasonal":
-            shutil.move(os.path.join(tpath, filename), os.path.join(tpath, "done"))
 
     print()
     print(",".join(uploaded))
 
 
+def b2_opt(ipath, opt):
+    uploader = BackblazeUploader()
+    prefix = os.path.basename(ipath.strip("/"))
+    if opt == "ls":
+        uploader.print_urls(prefix)
+    elif opt == "rm":
+        uploader.remove_files(prefix)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) <= 2:
-        try:
-            tpath = sys.argv[1]
-        except IndexError:
-            tpath = "./"
-        opath = os.path.join(tpath, ".out")
-        local_process(tpath, opath)
-    # uploader = BackblazeUploader()
-    # uploader._upload(
-    #     "/home/michelle/Downloads/avscripts/testup/[赤ずきんチャチャ][24][私が伝説の王女様？].json",
-    #     "testup",
-    # )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ipath", help="directory to encode")
+    parser.add_argument(
+        "-upt", default="b2", choices=["scp", "b2", "debug"], help="upload target"
+    )
+    parser.add_argument("-opath", default=None, help="output path, default ipath/.out")
+    parser.add_argument(
+        "-ext", default=MP4, choices=[MP4, WEBM], help="target format, default .mp4"
+    )
+    parser.add_argument(
+        "-opt",
+        default="up",
+        choices=["up", "ls", "rm"],
+        help="up: upload, ls: print json links, rm: remove",
+    )
+    args = parser.parse_args()
+
+    if args.upt == "b2" and args.opt != "up":
+        b2_opt(args.ipath, args.opt)
+        exit()
+
+    local_process(args.ipath, args.upt, args.opath, args.ext)
