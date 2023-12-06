@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-import argparse
-import hashlib
-import shutil
-import sys
 import os
-import base64
-import subprocess
+import sys
+import time
 import json
+import base64
+import shutil
+import hashlib
+import argparse
+import subprocess
 from urllib import request, parse
 from urllib.error import HTTPError
 from pprint import pprint
@@ -50,7 +51,7 @@ def get_ffmpeg_call(source_path, ext):
                 "-pix_fmt",
                 "yuv420p",
                 "-crf",
-                "25",
+                "23",
                 "-preset",
                 "veryfast",
                 # "-tune",
@@ -324,6 +325,8 @@ class SCPUploader:
 
 
 class BackblazeUploader:
+    """Useful for querying, but slower than b2 cli for uploads since I didnt thread this"""
+
     @staticmethod
     def _send_req(req):
         try:
@@ -423,6 +426,7 @@ class BackblazeUploader:
         )
         print(f"Upload {filename}")
         file_id = start_info["fileId"]
+        part_number = 0
         try:
             # b2_get_upload_part_url (for each thread that are are uploading)
             upload_part_url = self._send_api_req(
@@ -450,6 +454,7 @@ class BackblazeUploader:
                     req.add_header("X-Bz-Content-Sha1", chunk_sha1)
                     self._send_req(req)
                     part_number += 1
+                    time.sleep(1)
             # b2_finish_large_file
             upload_result = self._send_api_req(
                 "b2_finish_large_file",
@@ -462,7 +467,7 @@ class BackblazeUploader:
             cancel_info = self._send_api_req(
                 "b2_cancel_large_file", {"fileId": file_id}
             )
-            print(f"Canceled {cancel_info['fileName']}")
+            print(f"\nCanceled {cancel_info['fileName']} after part {part_number}")
             raise err
 
     def put(self, target_path, vtt_sub_path, prefix):
@@ -495,12 +500,113 @@ class BackblazeUploader:
         )
         # b2_delete_file_version
         for fileinfo in result.get("files", tuple()):
+            print(f"rm {fileinfo['fileName']}")
             self._send_api_req(
                 "b2_delete_file_version",
                 {
                     "fileName": fileinfo["fileName"],
                     "fileId": fileinfo["fileId"],
                 },
+            )
+
+
+class B2Uploader:
+    """Upload with b2 upload-file cli"""
+
+    def __init__(self) -> None:
+        self.count = 0
+        # b2 auth
+        with open("./backblaze_args", "r") as fn:
+            backblaze_args = json.load(fn)
+        self.b2_env = {
+            "B2_APPLICATION_KEY_ID": backblaze_args["keyID"],
+            "B2_APPLICATION_KEY": backblaze_args["key"],
+        }
+        self.api_url = backblaze_args["apiUrl"]
+        self.bucket_name = backblaze_args["bucketName"]
+
+    @staticmethod
+    def _content_type(ext):
+        if ext == JSON:
+            return "application/json"
+        elif ext == VTT:
+            return "text/vtt"
+        else:
+            return f"video/{ext[1:]}"
+
+    def _filename(self, prefix, _basename, ext):
+        return f"{prefix}/{ext[1]}/{self.count:02}{ext}"
+
+    def _fileurl(self, filename):
+        return (
+            f"{self.api_url}/file/{self.bucket_name}/{parse.quote(filename, safe='/')}"
+        )
+
+    def _upload(self, path, prefix):
+        basename, ext = os.path.splitext(os.path.basename(path))
+        filename = self._filename(prefix, basename, ext)
+        content_type = self._content_type(ext)
+        subprocess.check_call(
+            [
+                "./b2",
+                "upload-file",
+                "--contentType",
+                content_type,
+                self.bucket_name,
+                path,
+                filename,
+            ],
+            env=self.b2_env,
+        )
+        print(f"Upload {filename}")
+        return self._fileurl(filename)
+
+    def put(self, target_path, vtt_sub_path, prefix):
+        self.count += 1
+        target_url = self._upload(target_path, prefix)
+        vtt_sub_url = None
+        if vtt_sub_path:
+            vtt_sub_url = self._upload(vtt_sub_path, prefix)
+        metadata_path = write_metadata(
+            target_path, target_url, vtt_sub_path, vtt_sub_url
+        )
+        return self._upload(metadata_path, prefix)
+
+
+class B2SyncUploader(B2Uploader):
+    """Upload with b2 sync cli"""
+
+    STG = ".stg"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prefixes = set()
+        try:
+            shutil.rmtree(self.STG)
+        except FileNotFoundError:
+            pass
+
+    def _upload(self, path, prefix):
+        basename, ext = os.path.splitext(os.path.basename(path))
+        filename = self._filename(prefix, basename, ext)
+        staging = os.path.join(self.STG, filename)
+        os.makedirs(os.path.dirname(staging), exist_ok=True)
+        os.link(path, staging)
+        self.prefixes.add(prefix)
+        return self._fileurl(filename)
+
+    def finalize(self):
+        for prefix in self.prefixes:
+            subprocess.check_call(
+                [
+                    "./b2",
+                    "sync",
+                    "--delete",
+                    "--replaceNewer",
+                    f"{self.STG}/{prefix}",
+                    f"b2://{self.bucket_name}/{prefix}",
+                ],
+                env=self.b2_env,
             )
 
 
@@ -522,7 +628,7 @@ def local_process(ipath, upt, opath, ext):
     if upt == "scp":
         uploader = SCPUploader()
     elif upt == "b2":
-        uploader = BackblazeUploader()
+        uploader = B2SyncUploader()
     else:
         uploader = DebugUploader()
 
@@ -535,6 +641,11 @@ def local_process(ipath, upt, opath, ext):
         target_path, vtt_sub_path = result
         url = uploader.put(target_path, vtt_sub_path, prefix)
         uploaded.append(url)
+
+    try:
+        uploader.finalize()
+    except AttributeError:
+        pass
 
     print()
     print(",".join(uploaded))
