@@ -1,2 +1,0 @@
-#!/usr/bin/env bash
-for f in *.m4a; do ffmpeg -i "$f" "${f%.m4a}.flac" && rm "$f"; done

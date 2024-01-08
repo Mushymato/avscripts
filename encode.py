@@ -161,7 +161,7 @@ def get_subtitle_track(source_path, ass_subs, vtt_subs):
     # check which sub track to use
     if ass_subs:
         escaped_ass = ass_subs.replace("\\", "\\\\\\").replace(":", "\:")
-        return ["-filter_complex", f"subtiltes='{escaped_ass}'"]
+        return ["-filter_complex", f"subtitles='{escaped_ass}'"]
     elif not vtt_subs:
         sub_tracks = ffprobe_streams(source_path, "s")
         if sub_tracks:
@@ -227,17 +227,17 @@ def process(source_dir, target_dir, filename, ext=MP4):
         #         subprocess.run(["ffmpeg", "-i", file_path, vtt_sub_path])
         #         vtt_subs = True
         #         break
-        for file_path in os.listdir(target_dir):
+        for file_path in os.listdir(source_dir):
             if not file_path.startswith(basename):
                 continue
             if file_path.endswith(SRT):
                 subprocess.run(
-                    ["ffmpeg", "-i", os.path.join(target_dir, file_path), vtt_sub_path]
+                    ["ffmpeg", "-i", os.path.join(source_dir, file_path), vtt_sub_path]
                 )
                 vtt_subs = True
                 break
             if file_path.endswith(ASS):
-                ass_subs = os.path.join(target_dir, file_path)
+                ass_subs = os.path.join(source_dir, file_path)
                 break
 
     if not os.path.isfile(target_path):
@@ -289,6 +289,7 @@ def write_metadata(target_path, target_url, vtt_sub_path, vtt_sub_url):
 
 
 class SCPUploader:
+    # scp $1*.{json,mp4} chu2@45.79.170.149:/var/www/uploads/$1
     def __init__(self) -> None:
         import paramiko
         from scp import SCPClient

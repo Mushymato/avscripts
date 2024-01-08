@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-for f in ./$1*.mkv;
-do ffmpeg -i "$f" -map 0:s:1 "${f%.*}.vtt";
-done
