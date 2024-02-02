@@ -19,7 +19,7 @@ DISPOSITION_DEFAULT = "DISPOSITION:default"
 SUB_EVAL_KEY = "TAG:NUMBER_OF_BYTES-eng"
 CODEC_NAME = "codec_name"
 
-IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub")
+IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub", "dvd_subtitle")
 
 NISEMONO = "https://u.nisemo.no/"
 MKV = ".mkv"
@@ -146,15 +146,32 @@ def ffprobe_duration(source_path):
 def get_audio_track(source_path):
     audio_tracks = ffprobe_streams(source_path, "a")
     audio_idx = None
-    default_idx = 0
+    default_idx = None
     for idx, data in enumerate(audio_tracks):
-        if data.get(DISPOSITION_DEFAULT):
+        if default_idx is None and data.get(DISPOSITION_DEFAULT):
             default_idx = idx
         if data.get(TAG_LANGUAGE) == "jpn" and audio_idx is None:
             audio_idx = idx
-    if audio_idx not in (default_idx, None):
+    default_idx = default_idx or 0
+    if audio_idx not in (default_idx, 0, None):
         return ["-map", f"{default_idx}:a:{audio_idx}"]
     return tuple()
+
+
+def _eval_subs(left_idx, right_idx, sub_data):
+    if left_idx is None:
+        return right_idx
+    if right_idx is None:
+        return left_idx
+    left_data = sub_data[left_idx]
+    if left_data.get(DISPOSITION_DEFAULT):
+        return left_idx
+    right_data = sub_data[right_idx]
+    if right_data.get(DISPOSITION_DEFAULT):
+        return right_idx
+    if left_data.get(SUB_EVAL_KEY, 0) < right_data.get(SUB_EVAL_KEY, 0):
+        return right_idx
+    return left_idx
 
 
 def get_subtitle_track(source_path, ass_subs, vtt_subs):
@@ -171,15 +188,9 @@ def get_subtitle_track(source_path, ass_subs, vtt_subs):
                 if data.get(TAG_LANGUAGE) != "eng":
                     continue
                 if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
-                    if img_sub_idx is None or (
-                        sub_tracks[img_sub_idx].get(SUB_EVAL_KEY, 0)
-                        < data.get(SUB_EVAL_KEY, 0)
-                    ):
-                        img_sub_idx = idx
-                elif sub_idx is None or (
-                    sub_tracks[sub_idx].get(SUB_EVAL_KEY, 0) < data.get(SUB_EVAL_KEY, 0)
-                ):
-                    sub_idx = idx
+                    img_sub_idx = _eval_subs(img_sub_idx, idx, sub_tracks)
+                else:
+                    sub_idx = _eval_subs(sub_idx, idx, sub_tracks)
             if sub_idx is None:
                 sub_idx = img_sub_idx or 0
             if sub_idx is not None:
@@ -189,9 +200,9 @@ def get_subtitle_track(source_path, ass_subs, vtt_subs):
                 escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
                 if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
                     # bitmap subs from bd/dvd
-                    # overlay=x=-240:y=0 to adjust positions when needed
                     ffmpeg_args.append(f"[0:v][0:s:{sub_idx}]overlay")
-                elif sub.get("DISPOSITION:default") or len(sub_tracks) == 1:
+                    # ffmpeg_args.append(f"[0:v][0:s:{sub_idx}]overlay=x=0:y=-160")
+                elif sub.get(DISPOSITION_DEFAULT) or len(sub_tracks) == 1:
                     # already default sub track
                     ffmpeg_args.append(f"subtitles='{escaped_source}'")
                 else:
