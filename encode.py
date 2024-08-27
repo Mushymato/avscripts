@@ -15,8 +15,9 @@ from pprint import pprint
 STAGING_TORRENT_DIR = os.path.abspath("D:\\Downloads\\avscripts\\staging")
 TARGET_SERVING_DIR = os.path.abspath("D:\\xampp\\htdocs\\uploads")
 TAG_LANGUAGE = "TAG:language"
+DISPO_SDH = "DISPOSITION:hearing_impaired"
 DISPOSITION_DEFAULT = "DISPOSITION:default"
-SUB_EVAL_KEY = "TAG:NUMBER_OF_BYTES-eng"
+SUB_EVAL_KEY = "TAG:NUMBER_OF_BYTES"
 CODEC_NAME = "codec_name"
 
 IMAGE_BASED_SUBS = ("hdmv_pgs_subtitle", "dvdsub", "dvd_subtitle")
@@ -177,7 +178,7 @@ def _eval_subs(left_idx, right_idx, sub_data):
 def get_subtitle_track(source_path, ass_subs, vtt_subs):
     # check which sub track to use
     if ass_subs:
-        escaped_ass = ass_subs.replace("\\", "\\\\\\").replace(":", "\:")
+        escaped_ass = ass_subs.replace("\\", "\\\\\\").replace(":", "\\:")
         return ["-filter_complex", f"subtitles='{escaped_ass}'"]
     elif not vtt_subs:
         sub_tracks = ffprobe_streams(source_path, "s")
@@ -185,7 +186,7 @@ def get_subtitle_track(source_path, ass_subs, vtt_subs):
             sub_idx = None
             img_sub_idx = None
             for idx, data in enumerate(sub_tracks):
-                if data.get(TAG_LANGUAGE) != "eng":
+                if data.get(TAG_LANGUAGE) != "eng" and not data.get(DISPO_SDH, False):
                     continue
                 if data.get(CODEC_NAME) in IMAGE_BASED_SUBS:
                     img_sub_idx = _eval_subs(img_sub_idx, idx, sub_tracks)
@@ -197,11 +198,12 @@ def get_subtitle_track(source_path, ass_subs, vtt_subs):
                 sub = sub_tracks[sub_idx]
                 ffmpeg_args = ["-filter_complex"]
                 # dum
-                escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\:")
+                escaped_source = source_path.replace("\\", "\\\\\\").replace(":", "\\:")
                 if sub.get(CODEC_NAME) in IMAGE_BASED_SUBS:
                     # bitmap subs from bd/dvd
                     ffmpeg_args.append(f"[0:v][0:s:{sub_idx}]overlay")
-                    # ffmpeg_args.append(f"[0:v][0:s:{sub_idx}]overlay=x=0:y=-160")
+                    # offset
+                    # ffmpeg_args.append(f"[0:v][0:s:{sub_idx}]overlay=x=-135:y=0")
                 elif sub.get(DISPOSITION_DEFAULT) or len(sub_tracks) == 1:
                     # already default sub track
                     ffmpeg_args.append(f"subtitles='{escaped_source}'")
